@@ -142,6 +142,18 @@ Important files:
 - `cache/` - shared repo clones or other temporary working copies used by Codex.
 - `review/` - candidate files or notes that need human review.
 
+Codex output is streamed through systemd/journald and appended to the per-run
+log file. This keeps live inspection simple while preserving durable run logs.
+
+Log retention defaults:
+
+- `CODEX_MIND_MAINTAINER_LOG_RETENTION_DAYS=90`
+- `CODEX_MIND_MAINTAINER_MIN_LOGS_TO_KEEP=20`
+
+Set `CODEX_MIND_MAINTAINER_LOG_RETENTION_DAYS=0` to disable pruning. Retention
+only applies to `logs/*.log`; it does not delete `last-run.md`, `review/`, or
+cached shared repositories.
+
 Systemd inspection:
 
 ```sh
@@ -170,6 +182,7 @@ Useful checks before installing or after edits:
 
 ```sh
 bash -n scripts/*.sh
+./scripts/test.sh
 ./scripts/maintain.sh --dry-run
 ./scripts/install-schedule.sh --dry-run
 ./scripts/uninstall-schedule.sh --dry-run
