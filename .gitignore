@@ -1,0 +1,11 @@
+.DS_Store
+*.log
+*.tmp
+
+# Local operator overrides and run state.
+.env
+.env.local
+*.local.env
+env
+state/
+.local-state/
