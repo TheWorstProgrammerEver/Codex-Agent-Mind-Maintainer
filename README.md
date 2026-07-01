@@ -29,8 +29,10 @@ The default shared sources are:
 - Secrets, private keys, tokens, passwords, Wi-Fi credentials, OAuth material,
   local-only credential values, host-only facts, device identifiers, and private
   paths must not be copied into shared intelligence or committed.
-- Ambiguous shared guidance, durable-note, or skill changes should become a
-  Linear Backlog issue rather than an autonomous risky edit.
+- Ambiguous shared guidance, durable-note, or skill changes should be skipped and
+  recorded locally first. Linear Backlog issues are reserved for concrete shared
+  follow-up work or important operator decisions that local review artifacts do
+  not capture well.
 - Overlapping runs are blocked by both the systemd service lifecycle and an
   explicit `flock` lock in `scripts/maintain.sh`.
 

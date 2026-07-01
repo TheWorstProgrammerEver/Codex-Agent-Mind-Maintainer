@@ -74,4 +74,10 @@ if [[ "$old_log_count" -ne 1 ]]; then
   exit 1
 fi
 
+grep -q 'Local review artifacts are the default for routine skipped durable-note' "$repo_dir/prompt.md"
+grep -q 'Do not create a Linear issue merely' "$repo_dir/prompt.md"
+grep -q 'because a local-authoritative file differs' "$repo_dir/prompt.md"
+grep -q 'Do not put agent pickup labels' "$repo_dir/prompt.md"
+grep -q 'If a similar Backlog issue already exists, update or reference it' "$repo_dir/prompt.md"
+
 printf 'maintainer shell tests passed\n'
