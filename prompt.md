@@ -138,7 +138,7 @@ captured by a local review artifact.
 
 Do not create noisy issues for routine successful refreshes, purely local state,
 expected drift between local notes and shared templates, or already-covered
-guidance. Do not put agent pickup labels such as `agent:<agent-name>` or `agent:any`
+guidance. Do not put agent pickup labels such as `agent:my-agent` or `agent:any`
 on human-review issues unless they are intentionally meant to become worker
 tasks later. If a similar Backlog issue already exists, update or reference it
 rather than creating a duplicate. If Linear tools are unavailable, record the
