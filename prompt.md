@@ -23,6 +23,8 @@ The runner may provide these environment variables:
 - `CODEX_MIND_MAINTAINER_RUN_ID`: unique run timestamp/id.
 - `CODEX_MIND_MAINTAINER_RUN_LOG`: log path for this run.
 - `CODEX_MIND_MAINTAINER_LAST_RUN`: last-run summary path created by the runner.
+- `CODEX_MIND_MAINTAINER_PREFLIGHT_RESULT`: deterministic preflight JSON result.
+- `CODEX_MIND_MAINTAINER_PREFLIGHT_WORKLIST`: focused Markdown worklist when preflight found unreconciled work.
 
 Use these defaults when variables are missing:
 
@@ -63,6 +65,11 @@ Use these defaults when variables are missing:
    - `diffs/`
 5. Record the starting state in your working notes: important paths, source refs,
    and anything that already looks risky.
+6. If `CODEX_MIND_MAINTAINER_PREFLIGHT_WORKLIST` exists, treat it as the default
+   scope for the run. You may inspect adjacent context needed to make safe
+   decisions, but do not rediscover every previously skipped conflict by default.
+7. Inspect `$CODEX_MIND_MAINTAINER_STATE_DIR/reconciliation-ledger.jsonl` for
+   prior decisions before creating new review artifacts or Linear issues.
 
 ## Shared AGENTS Guidance Refresh
 
@@ -161,6 +168,20 @@ For skipped durable-note conflicts, distinguish local review artifacts from
 Linear issues. A skipped conflict can be fully recorded locally when local files
 remain authoritative and no shared source needs review.
 
+Append machine-readable reconciliation decisions to:
+
+```text
+$CODEX_MIND_MAINTAINER_STATE_DIR/reconciliation-ledger.jsonl
+```
+
+Use JSONL with one event per decision. Include `schemaVersion`, `timestamp`,
+`agentId` when known, `runId`, `model` when known, `reasoningLabel` when known,
+`policyVersion`, `sourceIssue`, `path` or reconciliation target, `sharedRef`,
+`sharedHash`, `localHash` when relevant, `scope`, `authority`, `mergePolicy`,
+`decision`, `rationale`, and `recheck`. Stable durable-note pages should not get
+noisy per-edit agent signatures; keep provenance in the ledger and generated
+review artifacts.
+
 Do not duplicate long logs or store secret-bearing data.
 
 ## Self-Check
@@ -175,7 +196,9 @@ Before finishing:
 6. Confirm review artifacts exist for skipped ambiguous work.
 7. Confirm any Linear issue created this run is actionable and could not have
    been handled by local review notes alone.
-8. If a command failed, include the command and the reason without leaking secrets.
+8. Confirm reconciliation decisions were appended for copied, merged,
+   local-authoritative, non-actionable, or human-review outcomes.
+9. If a command failed, include the command and the reason without leaking secrets.
 
 ## Final Response
 
