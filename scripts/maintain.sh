@@ -13,6 +13,11 @@ Environment:
   CODEX_MIND_MAINTAINER_WORKSPACE       Codex working directory. Default: target home.
   CODEX_MIND_MAINTAINER_STATE_DIR       State/log/cache directory.
   CODEX_MIND_MAINTAINER_PROMPT_FILE     Prompt file. Default: ../prompt.md.
+  CODEX_MIND_MAINTAINER_PREFLIGHT_SCRIPT
+                                         Preflight script. Default: ./scripts/preflight.mjs.
+  CODEX_MIND_MAINTAINER_PREFLIGHT       Set 0 to bypass preflight.
+  CODEX_MIND_MAINTAINER_FORCE_FULL      Set 1 to force full maintenance.
+  CODEX_MIND_MAINTAINER_POLICY_VERSION  Reconciliation policy version.
   CODEX_MIND_MAINTAINER_MODEL           Codex model. Default: gpt-5.5.
   CODEX_MIND_MAINTAINER_REASONING       Reasoning effort. Default: xhigh.
   CODEX_MIND_MAINTAINER_SANDBOX         Sandbox mode. Default: danger-full-access.
@@ -59,6 +64,8 @@ home_dir="${CODEX_MIND_MAINTAINER_HOME:-$target_home}"
 workspace="${CODEX_MIND_MAINTAINER_WORKSPACE:-$home_dir}"
 state_dir="${CODEX_MIND_MAINTAINER_STATE_DIR:-$home_dir/.local/state/codex-agent-mind-maintainer}"
 prompt_file="${CODEX_MIND_MAINTAINER_PROMPT_FILE:-$repo_dir/prompt.md}"
+preflight_script="${CODEX_MIND_MAINTAINER_PREFLIGHT_SCRIPT:-$repo_dir/scripts/preflight.mjs}"
+preflight_enabled="${CODEX_MIND_MAINTAINER_PREFLIGHT:-1}"
 codex_bin="${CODEX_BIN:-$(command -v codex || true)}"
 model="${CODEX_MIND_MAINTAINER_MODEL:-gpt-5.5}"
 reasoning="${CODEX_MIND_MAINTAINER_REASONING:-xhigh}"
@@ -76,11 +83,6 @@ last_run="$state_dir/last-run.md"
 lock_file="$state_dir/run.lock"
 log_file="$logs_dir/$run_id.log"
 
-if [[ -z "$codex_bin" ]]; then
-  printf 'Unable to find codex on PATH. Set CODEX_BIN explicitly.\n' >&2
-  exit 1
-fi
-
 if [[ ! -f "$prompt_file" ]]; then
   printf 'Prompt file does not exist: %s\n' "$prompt_file" >&2
   exit 1
@@ -91,8 +93,18 @@ if [[ ! -d "$workspace" ]]; then
   exit 1
 fi
 
+if [[ "$preflight_enabled" != "0" && ! -f "$preflight_script" ]]; then
+  printf 'Preflight script does not exist: %s\n' "$preflight_script" >&2
+  exit 1
+fi
+
 if ! command -v flock >/dev/null 2>&1; then
   printf 'flock is required to prevent overlapping runs.\n' >&2
+  exit 1
+fi
+
+if [[ "$preflight_enabled" != "0" ]] && ! command -v node >/dev/null 2>&1; then
+  printf 'node is required for deterministic preflight.\n' >&2
   exit 1
 fi
 
@@ -123,6 +135,8 @@ if [[ "$dry_run" -eq 1 ]]; then
   printf 'Workspace: %s\n' "$workspace"
   printf 'State: %s\n' "$state_dir"
   printf 'Prompt: %s\n' "$prompt_file"
+  printf 'Preflight: %s\n' "$preflight_script"
+  printf 'Preflight enabled: %s\n' "$preflight_enabled"
   printf 'Log: %s\n' "$log_file"
   printf 'Model: %s\n' "$model"
   printf 'Reasoning: %s\n' "$reasoning"
@@ -132,11 +146,15 @@ if [[ "$dry_run" -eq 1 ]]; then
   printf 'Shared AGENTS URL: %s\n' "$shared_agents_url"
   printf 'Shared notes repo: %s\n' "$shared_notes_repo_url"
   printf 'Skills repo: %s\n' "$skills_repo_url"
-  printf 'Command: %s' "$codex_bin"
-  for arg in "${codex_args[@]}"; do
-    printf ' %q' "$arg"
-  done
-  printf ' < %q\n' "$prompt_file"
+  if [[ -n "$codex_bin" ]]; then
+    printf 'Command: %s' "$codex_bin"
+    for arg in "${codex_args[@]}"; do
+      printf ' %q' "$arg"
+    done
+    printf ' < %q\n' "$prompt_file"
+  else
+    printf 'Command: codex not found; no-op preflight runs do not require it.\n'
+  fi
   exit 0
 fi
 
@@ -197,8 +215,12 @@ fi
 
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 last_message="$(mktemp "$state_dir/last-message.XXXXXX.md")"
+prompt_input=""
 cleanup() {
   rm -f "$last_message"
+  if [[ -n "$prompt_input" && "$prompt_input" == "$state_dir"/prompt-input.*.md ]]; then
+    rm -f "$prompt_input"
+  fi
 }
 trap cleanup EXIT
 
@@ -213,6 +235,8 @@ export CODEX_MIND_MAINTAINER_LAST_RUN="$last_run"
 export CODEX_MIND_MAINTAINER_SHARED_AGENTS_URL="$shared_agents_url"
 export CODEX_MIND_MAINTAINER_SHARED_NOTES_REPO_URL="$shared_notes_repo_url"
 export CODEX_MIND_MAINTAINER_SKILLS_REPO_URL="$skills_repo_url"
+export CODEX_MIND_MAINTAINER_MODEL="$model"
+export CODEX_MIND_MAINTAINER_REASONING="$reasoning"
 
 {
   printf '# Codex Agent Mind Maintainer Run\n\n'
@@ -222,29 +246,120 @@ export CODEX_MIND_MAINTAINER_SKILLS_REPO_URL="$skills_repo_url"
   printf 'Workspace: %s\n' "$workspace"
   printf 'State: %s\n' "$state_dir"
   printf 'Prompt: %s\n' "$prompt_file"
+  printf 'Preflight: %s\n' "$preflight_script"
+  printf 'Preflight enabled: %s\n' "$preflight_enabled"
   printf 'Model: %s\n' "$model"
   printf 'Reasoning: %s\n' "$reasoning"
   printf 'Sandbox: %s\n' "$sandbox"
   printf 'Log retention days: %s\n' "$log_retention_days"
   printf 'Minimum logs to keep: %s\n' "$min_logs_to_keep"
   printf '\n'
+} | tee "$log_file"
+
+preflight_status="preflight-worklist"
+preflight_summary="Preflight bypassed."
+preflight_result=""
+preflight_worklist=""
+preflight_exit_code=0
+
+if [[ "$preflight_enabled" == "0" ]]; then
+  preflight_worklist=""
+else
+  printf '+ node %q\n\n' "$preflight_script" | tee -a "$log_file"
+  set +e
+  node "$preflight_script" 2>&1 | tee -a "$log_file"
+  preflight_exit_code=${PIPESTATUS[0]}
+  set -e
+
+  preflight_result="$state_dir/preflight/$run_id-result.json"
+  if [[ "$preflight_exit_code" -ne 0 ]]; then
+    finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    {
+      printf '# Codex Agent Mind Maintainer Last Run\n\n'
+      printf -- '- Run ID: %s\n' "$run_id"
+      printf -- '- Started: %s\n' "$started_at"
+      printf -- '- Finished: %s\n' "$finished_at"
+      printf -- '- Status: preflight-failed\n'
+      printf -- '- Exit code: %s\n' "$preflight_exit_code"
+      printf -- '- Log: %s\n' "$log_file"
+      printf -- '- Preflight result: %s\n' "$preflight_result"
+      printf '\nPreflight failed before full Codex maintenance. Inspect the log and result JSON.\n'
+    } >"$last_run"
+    prune_old_logs
+    printf 'Mind Maintainer preflight failed. Summary: %s\n' "$last_run"
+    printf 'Log: %s\n' "$log_file"
+    exit "$preflight_exit_code"
+  fi
+
+  preflight_status="$(node -e 'const fs=require("fs"); console.log(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).status)' "$preflight_result")"
+  preflight_summary="$(node -e 'const fs=require("fs"); console.log(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).summary)' "$preflight_result")"
+  preflight_worklist="$(node -e 'const fs=require("fs"); console.log(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).worklistPath || "")' "$preflight_result")"
+  export CODEX_MIND_MAINTAINER_PREFLIGHT_RESULT="$preflight_result"
+  export CODEX_MIND_MAINTAINER_PREFLIGHT_WORKLIST="$preflight_worklist"
+
+  if [[ "$preflight_status" == "preflight-noop" ]]; then
+    finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    {
+      printf '# Codex Agent Mind Maintainer Last Run\n\n'
+      printf -- '- Run ID: %s\n' "$run_id"
+      printf -- '- Started: %s\n' "$started_at"
+      printf -- '- Finished: %s\n' "$finished_at"
+      printf -- '- Status: preflight-noop\n'
+      printf -- '- Exit code: 0\n'
+      printf -- '- Log: %s\n' "$log_file"
+      printf -- '- Preflight result: %s\n' "$preflight_result"
+      printf '\n%s\n' "$preflight_summary"
+    } >"$last_run"
+    prune_old_logs
+    printf 'Mind Maintainer preflight-noop. Summary: %s\n' "$last_run"
+    printf 'Log: %s\n' "$log_file"
+    exit 0
+  fi
+fi
+
+if [[ -z "$codex_bin" ]]; then
+  printf 'Unable to find codex on PATH. Set CODEX_BIN explicitly.\n' >&2 | tee -a "$log_file"
+  exit 1
+fi
+
+if [[ -n "$preflight_worklist" ]]; then
+  prompt_input="$(mktemp "$state_dir/prompt-input.XXXXXX.md")"
+  {
+    cat "$prompt_file"
+    printf '\n\n## Deterministic Preflight Worklist\n\n'
+    cat "$preflight_worklist"
+  } >"$prompt_input"
+else
+  prompt_input="$prompt_file"
+fi
+
+{
+  printf '\nPreflight status: %s\n' "$preflight_status"
+  printf 'Preflight summary: %s\n' "$preflight_summary"
+  if [[ -n "$preflight_result" ]]; then
+    printf 'Preflight result: %s\n' "$preflight_result"
+  fi
+  if [[ -n "$preflight_worklist" ]]; then
+    printf 'Preflight worklist: %s\n' "$preflight_worklist"
+  fi
+  printf '\n'
   printf '+ %q' "$codex_bin"
   for arg in "${codex_args[@]/__LAST_MESSAGE_PATH__/$last_message}"; do
     printf ' %q' "$arg"
   done
-  printf ' < %q\n\n' "$prompt_file"
-} | tee "$log_file"
+  printf ' < %q\n\n' "$prompt_input"
+} | tee -a "$log_file"
 
 set +e
-"$codex_bin" "${codex_args[@]/__LAST_MESSAGE_PATH__/$last_message}" <"$prompt_file" 2>&1 |
+"$codex_bin" "${codex_args[@]/__LAST_MESSAGE_PATH__/$last_message}" <"$prompt_input" 2>&1 |
   tee -a "$log_file"
 exit_code=${PIPESTATUS[0]}
 set -e
 
 finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-status="succeeded"
+status="full-maintenance-succeeded"
 if [[ "$exit_code" -ne 0 ]]; then
-  status="failed"
+  status="full-maintenance-failed"
 fi
 
 {
@@ -256,6 +371,14 @@ fi
   printf -- '- Exit code: %s\n' "$exit_code"
   printf -- '- Log: %s\n' "$log_file"
   printf -- '- Prompt: %s\n' "$prompt_file"
+  printf -- '- Preflight status: %s\n' "$preflight_status"
+  printf -- '- Preflight summary: %s\n' "$preflight_summary"
+  if [[ -n "$preflight_result" ]]; then
+    printf -- '- Preflight result: %s\n' "$preflight_result"
+  fi
+  if [[ -n "$preflight_worklist" ]]; then
+    printf -- '- Preflight worklist: %s\n' "$preflight_worklist"
+  fi
   printf -- '- Model: %s\n' "$model"
   printf -- '- Reasoning: %s\n' "$reasoning"
   printf -- '- Sandbox: %s\n' "$sandbox"

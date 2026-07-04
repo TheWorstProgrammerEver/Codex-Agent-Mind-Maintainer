@@ -2,13 +2,23 @@
 
 Host-native scheduled maintenance for a dedicated Codex agent host.
 
-The maintainer starts a fresh `codex exec` run on a schedule. The shell scripts
-own scheduling, locking, logs, and last-run summaries. The main maintenance
-policy lives in the single prompt file at `prompt.md`.
+The maintainer starts with a deterministic preflight and only runs `codex exec`
+when shared inputs have unreconciled work. The shell scripts own scheduling,
+locking, logs, preflight dispatch, and last-run summaries. The main full
+maintenance policy lives in the single prompt file at `prompt.md`.
 
 ## What It Does
 
-Each run asks Codex to:
+Each run first checks whether any managed input materially changed:
+
+- shared `AGENTS.md` managed guidance;
+- shared durable notes;
+- shared Codex skills;
+- known local-authoritative durable-note conflicts recorded in the local ledger.
+
+If preflight finds no unreconciled work, the run writes `preflight-noop` to
+`last-run.md` and exits without invoking Codex. If it finds work, it writes a
+focused worklist and asks Codex to:
 
 - refresh the managed shared guidance block in the local `AGENTS.md`;
 - merge useful shared durable notes without overwriting local host state;
@@ -33,6 +43,8 @@ The default shared sources are:
   recorded locally first. Linear Backlog issues are reserved for concrete shared
   follow-up work or important operator decisions that local review artifacts do
   not capture well.
+- Known local-authoritative durable-note paths are skipped only when their
+  ledger decision remains current for the shared hash and policy version.
 - Overlapping runs are blocked by both the systemd service lifecycle and an
   explicit `flock` lock in `scripts/maintain.sh`.
 
@@ -64,6 +76,24 @@ CODEX_MIND_MAINTAINER_MODEL=gpt-5.5 \
 CODEX_MIND_MAINTAINER_REASONING=xhigh \
 CODEX_MIND_MAINTAINER_WORKSPACE="$HOME" \
 ./scripts/maintain.sh
+```
+
+Force full maintenance even when preflight would otherwise skip:
+
+```sh
+CODEX_MIND_MAINTAINER_FORCE_FULL=1 ./scripts/maintain.sh
+```
+
+Bypass preflight entirely for debugging:
+
+```sh
+CODEX_MIND_MAINTAINER_PREFLIGHT=0 ./scripts/maintain.sh
+```
+
+Change the reconciliation policy version when operator rules change:
+
+```sh
+CODEX_MIND_MAINTAINER_POLICY_VERSION=2026-07-05-preflight-v2 ./scripts/maintain.sh
 ```
 
 ## Install Schedule
@@ -140,6 +170,8 @@ Default state location:
 Important files:
 
 - `last-run.md` - latest run summary and Codex final message.
+- `reconciliation-ledger.jsonl` - append-only reconciliation decisions.
+- `preflight/` - deterministic preflight JSON results and focused worklists.
 - `logs/` - stdout/stderr logs for each maintainer run.
 - `cache/` - shared repo clones or other temporary working copies used by Codex.
 - `review/` - candidate files or notes that need human review.
@@ -155,6 +187,28 @@ Log retention defaults:
 Set `CODEX_MIND_MAINTAINER_LOG_RETENTION_DAYS=0` to disable pruning. Retention
 only applies to `logs/*.log`; it does not delete `last-run.md`, `review/`, or
 cached shared repositories.
+
+Last-run status values:
+
+- `preflight-noop` - preflight found no unreconciled work and skipped Codex.
+- `preflight-worklist` - preflight found work and full maintenance started.
+- `full-maintenance-succeeded` - Codex completed a focused maintenance pass.
+- `full-maintenance-failed` - Codex returned a non-zero exit code.
+- `preflight-failed` - deterministic source refresh or ledger processing failed.
+- `skipped-overlap` - another run already held the maintainer lock.
+
+Inspect the reconciliation ledger with `jq`:
+
+```sh
+jq -r '[.timestamp, .decision, .mergePolicy, .path // .target, .rationale] | @tsv' \
+  ~/.local/state/codex-agent-mind-maintainer/reconciliation-ledger.jsonl
+```
+
+Ledger entries are events, not immutable truth. Recheck rules currently support
+shared-hash changes, policy changes, optional local-hash changes, TTL-style
+rules such as `ttl:P7D`, manual rechecks, and explicit full-maintenance forcing.
+No derived index is maintained; scan the JSONL directly unless a future measured
+need justifies an index.
 
 Systemd inspection:
 
@@ -185,6 +239,7 @@ Useful checks before installing or after edits:
 ```sh
 bash -n scripts/*.sh
 ./scripts/test.sh
+node scripts/preflight-test.mjs
 ./scripts/maintain.sh --dry-run
 ./scripts/install-schedule.sh --dry-run
 ./scripts/uninstall-schedule.sh --dry-run
