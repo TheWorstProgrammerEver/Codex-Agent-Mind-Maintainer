@@ -13,6 +13,7 @@ try {
   testNoopAndKnownConflicts();
   testChangedSharedHash();
   testChangedPolicyVersion();
+  testManualFinalDecisionForNonBuiltInPaths();
   testUnresolvedPriorDecision();
   testFailedFetch();
   console.log("preflight tests passed");
@@ -57,6 +58,46 @@ function testChangedPolicyVersion() {
   assert.ok(result.worklist.some((item) => item.path === "state/HOST.md"));
 }
 
+function testManualFinalDecisionForNonBuiltInPaths() {
+  const fixture = createFixture("manual-final-decision-non-built-in", {
+    sharedFiles: {
+      "decisions/example.md": "# Shared Decision\n",
+      "preferences/README.md": "# Shared Preferences\n",
+    },
+    localFiles: {
+      "decisions/example.md": "# Local Decision\n",
+      "preferences/README.md": "# Local Preferences\n",
+    },
+  });
+  const first = runPreflight(fixture, "20260705T000007Z");
+  assert.equal(first.status, "preflight-worklist");
+  const decisionItem = workItemForPath(first, "decisions/example.md");
+  const preferencesItem = workItemForPath(first, "preferences/README.md");
+
+  appendDecision(fixture.stateDir, {
+    runId: "20260705T000007Z",
+    decision: "local-authoritative",
+    recheck: "shared-hash-change local-hash-change",
+    item: decisionItem,
+  });
+  appendDecision(fixture.stateDir, {
+    runId: "20260705T000007Z",
+    decision: "merged",
+    recheck: "shared-hash-change local-hash-change",
+    item: preferencesItem,
+  });
+
+  const second = runPreflight(fixture, "20260705T000008Z");
+  assert.equal(second.status, "preflight-noop");
+  assert.equal(second.worklist.length, 0);
+  assert.equal(second.skippedKnownConflictCount, 4);
+
+  writeFileSync(join(fixture.homeDir, "codex-notes", "preferences", "README.md"), "# Changed Local Preferences\n");
+  const third = runPreflight(fixture, "20260705T000009Z");
+  assert.equal(third.status, "preflight-worklist");
+  assert.ok(third.worklist.some((item) => item.path === "preferences/README.md"));
+}
+
 function testUnresolvedPriorDecision() {
   const fixture = createFixture("unresolved-prior-decision", {
     sharedFiles: {
@@ -66,11 +107,11 @@ function testUnresolvedPriorDecision() {
       "notes/UNKNOWN.md": "# Local\n",
     },
   });
-  const first = runPreflight(fixture, "20260705T000007Z");
+  const first = runPreflight(fixture, "20260705T000010Z");
   assert.equal(first.status, "preflight-worklist");
   assert.ok(first.worklist.some((item) => item.path === "notes/UNKNOWN.md"));
 
-  const second = runPreflight(fixture, "20260705T000008Z");
+  const second = runPreflight(fixture, "20260705T000011Z");
   assert.equal(second.status, "preflight-worklist");
   assert.ok(second.worklist.some((item) => item.target === "durable-note-unresolved"));
 }
@@ -81,7 +122,7 @@ function testFailedFetch() {
     encoding: "utf8",
     env: {
       ...process.env,
-      CODEX_MIND_MAINTAINER_RUN_ID: "20260705T000009Z",
+      CODEX_MIND_MAINTAINER_RUN_ID: "20260705T000012Z",
       CODEX_MIND_MAINTAINER_HOME: fixture.homeDir,
       CODEX_MIND_MAINTAINER_STATE_DIR: fixture.stateDir,
       CODEX_MIND_MAINTAINER_CACHE_DIR: fixture.cacheDir,
@@ -91,7 +132,7 @@ function testFailedFetch() {
     },
   });
   assert.notEqual(result.status, 0);
-  const saved = JSON.parse(readFileSync(join(fixture.stateDir, "preflight", "20260705T000009Z-result.json"), "utf8"));
+  const saved = JSON.parse(readFileSync(join(fixture.stateDir, "preflight", "20260705T000012Z-result.json"), "utf8"));
   assert.equal(saved.status, "preflight-failed");
 }
 
@@ -191,6 +232,38 @@ function git(directory, args) {
 function writeFile(path, content) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, content);
+}
+
+function workItemForPath(result, path) {
+  const item = result.worklist.find((candidate) => candidate.path === path);
+  assert.ok(item, `Expected worklist item for ${path}`);
+  return item;
+}
+
+function appendDecision(stateDir, { runId, decision, recheck, item }) {
+  const event = {
+    schemaVersion: 1,
+    timestamp: "2026-07-05T00:00:00.000Z",
+    agentId: "test-agent",
+    runId,
+    model: "gpt-5.5",
+    reasoningLabel: "high",
+    policyVersion: "2026-07-05-preflight-v1",
+    sourceIssue: "RYA-64",
+    eventType: "reconciliation-decision",
+    target: item.target,
+    path: item.path,
+    sharedRef: item.sharedRef,
+    sharedHash: item.sharedHash,
+    localHash: item.localHash,
+    scope: item.scope,
+    authority: item.authority,
+    mergePolicy: item.mergePolicy,
+    decision,
+    rationale: "Manual test reconciliation decision.",
+    recheck,
+  };
+  writeFileSync(join(stateDir, "reconciliation-ledger.jsonl"), `${JSON.stringify(event)}\n`, { flag: "a" });
 }
 
 function readLedger(stateDir) {

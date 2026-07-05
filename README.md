@@ -14,7 +14,8 @@ Each run first checks whether any managed input materially changed:
 - shared `AGENTS.md` managed guidance;
 - shared durable notes;
 - shared Codex skills;
-- known local-authoritative durable-note conflicts recorded in the local ledger.
+- known local-authoritative durable-note conflicts and manually reviewed
+  durable-note conflicts recorded in the local ledger.
 
 If preflight finds no unreconciled work, the run writes `preflight-noop` to
 `last-run.md` and exits without invoking Codex. If it finds work, it writes a
@@ -43,8 +44,11 @@ The default shared sources are:
   recorded locally first. Linear Backlog issues are reserved for concrete shared
   follow-up work or important operator decisions that local review artifacts do
   not capture well.
-- Known local-authoritative durable-note paths are skipped only when their
+- Known local-authoritative durable-note paths are auto-skipped only when their
   ledger decision remains current for the shared hash and policy version.
+- Manual final durable-note decisions such as `local-authoritative` and
+  `merged` can reconcile other paths while their policy version and configured
+  hash recheck rules still match.
 - Overlapping runs are blocked by both the systemd service lifecycle and an
   explicit `flock` lock in `scripts/maintain.sh`.
 

@@ -39,6 +39,8 @@ const sharedNotesCache = join(cacheDir, "shared-durable-notes");
 const skillsCache = join(cacheDir, "codex-skills");
 const defaultSharedAgentsUrl =
   "https://raw.githubusercontent.com/TheWorstProgrammerEver/Codex-Shared-Durable-Notes/main/AGENTS.shared.md";
+const finalDurableNoteDecisions = ["local-authoritative", "merged"];
+const unresolvedDurableNoteDecisions = ["needs-human-review", "preflight-worklist"];
 
 mkdirSync(preflightDir, { recursive: true });
 
@@ -144,15 +146,32 @@ function runPreflight() {
       continue;
     }
 
+    const prior = latestPathEvent(ledger, file);
+    const hashes = { sharedHash, localHash };
+
+    if (isUnresolvedDecision(prior)) {
+      worklist.push(workItem({
+        target: "durable-note-unresolved",
+        path: file,
+        reason: "Prior ledger decision is unresolved and must remain in the focused worklist.",
+        sharedRef: sharedNotesRef,
+        sharedHash,
+        localHash,
+        mergePolicy: "manual-review",
+        authority: "local",
+        scope: "local",
+      }));
+      continue;
+    }
+
     if (isKnownLocalAuthoritative(file) && localHash !== null) {
-      const prior = latestPathEvent(ledger, file);
       if (!prior) {
         ledgerEvents.push(localAuthoritativeEvent(file, sharedNotesRef, sharedHash, localHash));
         skippedKnownConflictCount += 1;
         continue;
       }
 
-      if (isCurrentDecision(prior, { sharedHash, localHash }, ["local-authoritative"])) {
+      if (isCurrentDecision(prior, hashes, finalDurableNoteDecisions)) {
         skippedKnownConflictCount += 1;
         continue;
       }
@@ -171,19 +190,8 @@ function runPreflight() {
       continue;
     }
 
-    const prior = latestPathEvent(ledger, file);
-    if (prior?.decision === "needs-human-review" || prior?.decision === "preflight-worklist") {
-      worklist.push(workItem({
-        target: "durable-note-unresolved",
-        path: file,
-        reason: "Prior ledger decision is unresolved and must remain in the focused worklist.",
-        sharedRef: sharedNotesRef,
-        sharedHash,
-        localHash,
-        mergePolicy: "manual-review",
-        authority: "local",
-        scope: "local",
-      }));
+    if (isCurrentDecision(prior, hashes, finalDurableNoteDecisions)) {
+      skippedKnownConflictCount += 1;
       continue;
     }
 
@@ -228,7 +236,7 @@ function runPreflight() {
 
   const status = worklist.length === 0 ? "preflight-noop" : "preflight-worklist";
   const summary = status === "preflight-noop"
-    ? `Preflight found no unreconciled changes; ${skippedKnownConflictCount} known durable-note conflict(s) skipped by reconciliation ledger.`
+    ? `Preflight found no unreconciled changes; ${skippedKnownConflictCount} reconciled durable-note conflict(s) skipped by reconciliation ledger.`
     : `Preflight found ${worklist.length} unreconciled item(s); full maintenance should use the focused worklist.`;
 
   return {
@@ -268,7 +276,14 @@ function latestPathEvent(events, path) {
   return null;
 }
 
+function isUnresolvedDecision(event) {
+  return unresolvedDurableNoteDecisions.includes(event?.decision);
+}
+
 function isCurrentDecision(event, target, acceptedDecisions) {
+  if (!event) {
+    return false;
+  }
   if (!acceptedDecisions.includes(event.decision)) {
     return false;
   }
