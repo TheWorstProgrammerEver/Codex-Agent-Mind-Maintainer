@@ -11,6 +11,7 @@ Environment:
   TARGET_USER          User that runs the service. Default: sudo user or current user.
   MAINTAINER_DIR      Maintainer directory. Default: parent of this script.
   NODE_BIN             Absolute Node executable used by the service.
+                       Its directory must expose node as the same executable.
                        Default: Agent Boot runtime, target-user local runtime,
                        or node on the installer PATH.
   UNIT_BASE           Unit name prefix. Default: codex-agent-mind-maintainer.
@@ -92,8 +93,16 @@ if [[ "$node_bin" != /* || ! -x "$node_bin" || -d "$node_bin" ]]; then
   exit 1
 fi
 
+node_dir="$(CDPATH= cd -- "$(dirname -- "$node_bin")" && pwd -P)"
 node_bin="$(readlink -f -- "$node_bin")"
-node_dir="$(dirname -- "$node_bin")"
+node_command="$node_dir/node"
+
+if [[ ! -x "$node_command" || -d "$node_command" || \
+  "$(readlink -f -- "$node_command")" != "$node_bin" ]]
+then
+  printf 'NODE_BIN directory must expose node as the selected executable: %s\n' "$node_bin" >&2
+  exit 1
+fi
 
 service_path_value=""
 append_path_component() {

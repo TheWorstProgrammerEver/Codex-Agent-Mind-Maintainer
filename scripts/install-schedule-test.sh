@@ -13,23 +13,32 @@ trap cleanup EXIT
 target_user="$(id -un)"
 maintainer_dir="$tmp_root/maintainer"
 private_runtime_dir="$tmp_root/private-node/bin"
+unresolvable_runtime_dir="$tmp_root/unresolvable-node/bin"
 systemd_dir="$tmp_root/systemd"
 systemctl_log="$tmp_root/systemctl.log"
+unresolvable_error="$tmp_root/unresolvable-node.err"
 canary_marker="$tmp_root/private-node-used"
 service_marker="$tmp_root/service-reached"
 host_node="$(readlink -f -- "$(command -v node)")"
 unit_base="codex-agent-mind-maintainer-test"
 
-mkdir -p "$maintainer_dir/scripts" "$private_runtime_dir" "$systemd_dir"
+mkdir -p \
+  "$maintainer_dir/scripts" \
+  "$private_runtime_dir" \
+  "$unresolvable_runtime_dir" \
+  "$systemd_dir"
 
-cat >"$private_runtime_dir/node" <<EOF
+cat >"$private_runtime_dir/node-v22-custom" <<EOF
 #!/bin/bash
 set -euo pipefail
 printf 'private runtime used\n' >"$canary_marker"
 export PRIVATE_NODE_CANARY=1
 exec "$host_node" "\$@"
 EOF
-chmod +x "$private_runtime_dir/node"
+chmod +x "$private_runtime_dir/node-v22-custom"
+ln -s node-v22-custom "$private_runtime_dir/node"
+
+cp "$private_runtime_dir/node-v22-custom" "$unresolvable_runtime_dir/node-v22-custom"
 
 cat >"$maintainer_dir/scripts/maintain.sh" <<EOF
 #!/usr/bin/env node
@@ -47,8 +56,22 @@ printf '%s\n' "\$*" >>"$systemctl_log"
 EOF
 chmod +x "$fake_systemctl"
 
+if NODE_BIN="$unresolvable_runtime_dir/node-v22-custom" \
+  TARGET_USER="$target_user" \
+  MAINTAINER_DIR="$maintainer_dir" \
+  UNIT_BASE="$unit_base" \
+  SYSTEMD_DIR="$systemd_dir" \
+  SYSTEMCTL_BIN="$fake_systemctl" \
+    "$repo_dir/scripts/install-schedule.sh" --dry-run >/dev/null 2>"$unresolvable_error"
+then
+  printf 'Expected NODE_BIN without a matching node command to be rejected.\n' >&2
+  exit 1
+fi
+grep -q '^NODE_BIN directory must expose node as the selected executable:' \
+  "$unresolvable_error"
+
 install_fixture() {
-  NODE_BIN="$private_runtime_dir/node" \
+  NODE_BIN="$private_runtime_dir/node-v22-custom" \
   TARGET_USER="$target_user" \
   MAINTAINER_DIR="$maintainer_dir" \
   UNIT_BASE="$unit_base" \
