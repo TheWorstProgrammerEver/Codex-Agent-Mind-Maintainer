@@ -143,7 +143,9 @@ state directory overrides. Do not store credentials or tokens there.
 The installer resolves an executable Node runtime and writes its directory at
 the front of the controlled `PATH` passed by `ExecStart`. This final assignment
 also prevents the optional environment file from replacing the selected
-runtime. Agent Boot's private runtime at
+runtime. The selected executable's directory must also expose a `node` command
+that resolves to the same file, matching the `/usr/bin/env node` entrypoint
+contract. Agent Boot's private runtime at
 `/opt/agent-boot/runtime/bin/node` is preferred when present, followed by a
 target-user local runtime and then `node` on the installer `PATH`. To select a
 different installed runtime explicitly:
@@ -270,10 +272,12 @@ If `systemd-analyze` is installed, the installer dry-run also verifies the
 generated unit files.
 
 On a disposable or otherwise controlled systemd host, run the real
-system-manager canary as root. It installs a uniquely named test service/timer,
-verifies the units, installs twice, starts the service with a private Node
-runtime as its only suitable interpreter, checks the timer's finite next
-trigger, and removes all test-owned state:
+system-manager canary as root. The canary resolves Agent Boot's private runtime
+directly before falling back to target-user or caller PATH locations, so it
+does not depend on sudo preserving a login-shell PATH. It installs a uniquely
+named test service/timer, verifies the units, installs twice, starts the service
+with a private Node runtime as its only suitable interpreter, checks the
+timer's finite next trigger, and removes all test-owned state:
 
 ```sh
 sudo ./scripts/systemd-canary-test.sh
