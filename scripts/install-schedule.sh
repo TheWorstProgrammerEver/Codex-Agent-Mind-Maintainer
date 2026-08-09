@@ -10,6 +10,9 @@ Installs a systemd service and timer for Codex Agent Mind Maintainer.
 Environment:
   TARGET_USER          User that runs the service. Default: sudo user or current user.
   MAINTAINER_DIR      Maintainer directory. Default: parent of this script.
+  NODE_BIN             Absolute Node executable used by the service.
+                       Default: Agent Boot runtime, target-user local runtime,
+                       or node on the installer PATH.
   UNIT_BASE           Unit name prefix. Default: codex-agent-mind-maintainer.
   SYSTEMD_DIR         Unit install dir. Default: /etc/systemd/system.
   SCHEDULE_INTERVAL   Timer interval. Default: 6h.
@@ -67,6 +70,53 @@ if ! target_home="$(getent passwd "$target_user" | cut -d: -f6)"; then
   exit 1
 fi
 
+node_bin="${NODE_BIN:-}"
+if [[ -z "$node_bin" ]]; then
+  for candidate in \
+    /opt/agent-boot/runtime/bin/node \
+    "$target_home/.local/bin/node"
+  do
+    if [[ -x "$candidate" && ! -d "$candidate" ]]; then
+      node_bin="$candidate"
+      break
+    fi
+  done
+fi
+
+if [[ -z "$node_bin" ]]; then
+  node_bin="$(command -v node || true)"
+fi
+
+if [[ "$node_bin" != /* || ! -x "$node_bin" || -d "$node_bin" ]]; then
+  printf 'NODE_BIN must resolve to an executable absolute file: %s\n' "${node_bin:-<not found>}" >&2
+  exit 1
+fi
+
+node_bin="$(readlink -f -- "$node_bin")"
+node_dir="$(dirname -- "$node_bin")"
+
+service_path_value=""
+append_path_component() {
+  local component="$1"
+
+  if [[ "$component" == *:* || "$component" == *$'\n'* || "$component" == *$'\r'* ]]; then
+    printf 'Service PATH component contains an unsupported character: %s\n' "$component" >&2
+    exit 1
+  fi
+
+  case ":$service_path_value:" in
+    *":$component:"*) return ;;
+  esac
+
+  service_path_value="${service_path_value:+$service_path_value:}$component"
+}
+
+append_path_component "$node_dir"
+append_path_component "$target_home/.local/bin"
+for component in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do
+  append_path_component "$component"
+done
+
 if [[ -z "$schedule_interval" ]]; then
   printf 'SCHEDULE_INTERVAL must not be empty.\n' >&2
   exit 1
@@ -98,7 +148,7 @@ WorkingDirectory=$maintainer_dir
 Environment=CODEX_MIND_MAINTAINER_HOME=$target_home
 Environment=CODEX_MIND_MAINTAINER_WORKSPACE=$target_home
 EnvironmentFile=-$target_home/.config/codex-agent-mind-maintainer/env
-ExecStart=$maintainer_dir/scripts/maintain.sh
+ExecStart=/usr/bin/env "PATH=$service_path_value" $maintainer_dir/scripts/maintain.sh
 TimeoutStartSec=infinity
 KillMode=control-group
 EOF

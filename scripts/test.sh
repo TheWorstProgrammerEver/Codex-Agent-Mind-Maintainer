@@ -11,6 +11,7 @@ cleanup() {
 trap cleanup EXIT
 
 node "$repo_dir/scripts/preflight-test.mjs"
+"$repo_dir/scripts/install-schedule-test.sh"
 
 home_dir="$tmp_root/home"
 state_dir="$tmp_root/state"
