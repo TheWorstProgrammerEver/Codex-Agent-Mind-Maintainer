@@ -199,6 +199,7 @@ function runPreflight(fixture, runId, extraEnv = {}) {
     encoding: "utf8",
     env: {
       ...process.env,
+      CODEX_HOME: join(fixture.homeDir, ".codex"),
       CODEX_MIND_MAINTAINER_RUN_ID: runId,
       CODEX_MIND_MAINTAINER_HOME: fixture.homeDir,
       CODEX_MIND_MAINTAINER_STATE_DIR: fixture.stateDir,
