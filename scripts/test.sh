@@ -79,6 +79,7 @@ for index in 1 2 3 4 5; do
 done
 
 output="$(
+  CODEX_HOME="$home_dir/.codex" \
   CODEX_BIN="$fake_codex" \
   CODEX_MIND_MAINTAINER_HOME="$home_dir" \
   CODEX_MIND_MAINTAINER_WORKSPACE="$home_dir" \
@@ -124,6 +125,7 @@ printf '# Local Index\n' >"$noop_home/codex-notes/INDEX.md"
 printf '# Local Host\n' >"$noop_home/codex-notes/state/HOST.md"
 cp -R "$skills_repo/example-skill" "$noop_home/.codex/skills/example-skill"
 noop_output="$(
+  CODEX_HOME="$noop_home/.codex" \
   CODEX_BIN="$fake_codex" \
   CODEX_MIND_MAINTAINER_HOME="$noop_home" \
   CODEX_MIND_MAINTAINER_WORKSPACE="$noop_home" \
